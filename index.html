@@ -3,137 +3,156 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Libro BIM - Instalaciones</title>
+    <title>Libro BIM - Visor</title>
     <style>
-        body { margin: 0; padding: 0; overflow: hidden; font-family: sans-serif; }
-        #viewer-container { width: 100vw; height: 100vh; position: relative; background: #f0f0f0; }
+        body { margin: 0; padding: 0; overflow: hidden; font-family: sans-serif; background: #f0f0f0; }
         
-        /* Panel Flotante */
-        #ui-panel {
-            position: absolute; top: 20px; left: 20px; width: 200px;
-            background: rgba(255, 255, 255, 0.9); padding: 15px; 
-            border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); z-index: 2;
-        }
-        .btn-filter {
-            width: 100%; padding: 10px; margin-bottom: 5px; border: 1px solid #ccc;
-            background: white; border-radius: 5px; cursor: pointer; font-weight: bold;
-        }
-        .btn-filter:hover { background: #eee; }
-        .btn-filter.active { background: #333; color: white; border-color: #333; }
-        
-        /* Pantalla de Carga */
-        #loading {
+        /* Panel de carga y errores */
+        #overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: white; display: flex; justify-content: center; align-items: center; z-index: 10;
-            font-size: 1.2rem; color: #555;
+            background: white; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 10;
+            padding: 20px; text-align: center;
         }
+        .spinner {
+            border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%;
+            width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 20px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #error-msg { color: red; margin-top: 10px; display: none; font-weight: bold; }
+        
+        /* Panel de Botones */
+        #ui-panel {
+            position: absolute; top: 20px; left: 20px; width: 220px;
+            background: rgba(255, 255, 255, 0.95); padding: 15px; 
+            border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); z-index: 2;
+            display: none; /* Se oculta hasta que cargue el modelo */
+        }
+        .btn {
+            width: 100%; padding: 12px; margin-bottom: 8px; border: none;
+            background: #eee; border-radius: 8px; cursor: pointer; font-size: 14px;
+            text-align: left; transition: 0.2s;
+        }
+        .btn:hover { background: #ddd; }
+        .btn.active { background: #2c3e50; color: white; }
     </style>
-
-    <!-- MAPA DE IMPORTACIÓN: Esto soluciona el conflicto de versiones -->
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.135.0/build/three.module.js",
-                "web-ifc": "https://unpkg.com/web-ifc@0.0.36/web-ifc-api.js",
-                "web-ifc-viewer": "https://unpkg.com/web-ifc-viewer@1.0.216/dist/web-ifc-viewer.js"
-            }
-        }
-    </script>
 </head>
 <body>
 
-    <div id="loading">Cargando modelo... por favor espera.</div>
-
-    <div id="ui-panel">
-        <h3>Filtros</h3>
-        <button class="btn-filter active" onclick="resetModel(this)">🏠 Ver Todo</button>
-        <button class="btn-filter" onclick="filterCategory('CONDUIT', this)">⚡ Tuberías</button>
-        <button class="btn-filter" onclick="filterCategory('BOXES', this)">📦 Cajas</button>
-        <button class="btn-filter" onclick="filterCategory('DEVICES', this)">💡 Luces</button>
+    <div id="overlay">
+        <div class="spinner" id="spinner"></div>
+        <div id="status-text">Iniciando motor 3D...</div>
+        <div id="error-msg"></div>
     </div>
 
-    <div id="viewer-container"></div>
+    <div id="ui-panel" id="ui-panel">
+        <h3>Instalaciones</h3>
+        <button class="btn active" onclick="reset()">🏠 Ver Todo</button>
+        <button class="btn" onclick="filtrar('TUBOS')">⚡ Tuberías</button>
+        <button class="btn" onclick="filtrar('CAJAS')">📦 Cajas</button>
+        <button class="btn" onclick="filtrar('LUCES')">💡 Luces</button>
+    </div>
 
+    <div id="viewer-container" style="width: 100vw; height: 100vh;"></div>
+
+    <!-- Usamos ESM.SH para evitar conflictos de versiones -->
     <script type="module">
-        import { IfcViewerAPI } from 'web-ifc-viewer';
-        import { IFCFLOWSEGMENT, IFCFLOWFITTING, IFCCABLECARRIERSEGMENT, IFCCABLECARRIERFITTING, IFCFLOWCONTROLLER, IFCELECTRICDISTRIBUTIONPOINT, IFCLIGHTFIXTURE, IFCSENSOR, IFCOUTLET, IFCSWITCHINGDEVICE } from 'web-ifc';
+        import { IfcViewerAPI } from 'https://esm.sh/web-ifc-viewer@1.0.217';
+        import { 
+            IFCFLOWSEGMENT, IFCFLOWFITTING, IFCCABLECARRIERSEGMENT, IFCCABLECARRIERFITTING, 
+            IFCFLOWCONTROLLER, IFCELECTRICDISTRIBUTIONPOINT, IFCLIGHTFIXTURE, IFCSENSOR, IFCOUTLET 
+        } from 'https://esm.sh/web-ifc';
 
         const container = document.getElementById('viewer-container');
-        const viewer = new IfcViewerAPI({ container, backgroundColor: { r: 240, g: 240, b: 240, a: 1 } });
-
-        // Configuración del Visor
-        viewer.axes.setAxes();
-        viewer.grid.setGrid();
+        const statusText = document.getElementById('status-text');
+        const errorMsg = document.getElementById('error-msg');
+        
+        // 1. INICIAR VISOR
+        let viewer;
+        try {
+            viewer = new IfcViewerAPI({ container, backgroundColor: { r: 240, g: 240, b: 240, a: 1 } });
+            viewer.axes.setAxes();
+            viewer.grid.setGrid();
+        } catch (e) {
+            showError("Error al iniciar visor: " + e.message);
+        }
 
         let modelID = null;
 
-        async function load() {
-            // Configurar la ruta del decodificador WASM (esencial para que no de error)
-            await viewer.IFC.setWasmPath('https://unpkg.com/web-ifc@0.0.36/', true);
-
+        async function main() {
             try {
-                // URL ABSOLUTA DE TU ARCHIVO
+                statusText.innerText = "Configurando WASM...";
+                // Esta ruta es CRÍTICA. Usamos uncdn para asegurar velocidad
+                await viewer.IFC.setWasmPath('https://unpkg.com/web-ifc@0.0.36/', true);
+
+                statusText.innerText = "Descargando modelo.ifc...";
+                // TU URL REAL:
                 const url = 'https://almariozamudio-az.github.io/proyecto-casa-libro/modelo.ifc';
                 
                 const model = await viewer.IFC.loadIfcUrl(url);
                 modelID = model.modelID;
-                
-                // Ocultar carga
-                document.getElementById('loading').style.display = 'none';
+
+                // Todo salió bien
+                document.getElementById('overlay').style.display = 'none';
+                document.getElementById('ui-panel').style.display = 'block';
 
             } catch (err) {
                 console.error(err);
-                document.getElementById('loading').innerText = 'Error: Revisa la consola (F12)';
+                // Aquí detectamos si es un error de archivo no encontrado
+                if(err.message && err.message.includes("404")) {
+                    showError("ERROR 404: No se encuentra el archivo 'modelo.ifc'. Revisa el nombre en GitHub.");
+                } else {
+                    showError("Error cargando: " + err.message);
+                }
             }
         }
 
-        load();
-
-        // --- LÓGICA DE FILTRADO ---
-        window.filterCategory = async (cat, btn) => {
+        // Funciones globales para los botones
+        window.filtrar = async (tipo) => {
             if (modelID === null) return;
-            updateBtns(btn);
+            let items = [];
+            
+            if(tipo === 'TUBOS') items = [IFCCABLECARRIERSEGMENT, IFCCABLECARRIERFITTING, IFCFLOWSEGMENT];
+            if(tipo === 'CAJAS') items = [IFCFLOWCONTROLLER, IFCELECTRICDISTRIBUTIONPOINT];
+            if(tipo === 'LUCES') items = [IFCLIGHTFIXTURE, IFCSENSOR, IFCOUTLET];
 
-            let types = [];
-            if (cat === 'CONDUIT') types = [IFCCABLECARRIERSEGMENT, IFCCABLECARRIERFITTING, IFCFLOWSEGMENT, IFCFLOWFITTING];
-            if (cat === 'BOXES') types = [IFCFLOWCONTROLLER, IFCELECTRICDISTRIBUTIONPOINT];
-            if (cat === 'DEVICES') types = [IFCLIGHTFIXTURE, IFCSENSOR, IFCOUTLET, IFCSWITCHINGDEVICE];
+            // Lógica de filtrado visual (Subset)
+            await viewer.IFC.loader.ifcManager.removeSubset(modelID, undefined, 'custom');
+            const model = viewer.context.items.pickableIfcModels.find(m => m.modelID === modelID);
+            if(model) model.visible = false;
 
-            // Buscar IDs
             let ids = [];
-            for (const t of types) {
-                const found = await viewer.IFC.getAllItemsOfType(modelID, t, false);
+            for(let t of items) {
+                let found = await viewer.IFC.getAllItemsOfType(modelID, t, false);
                 ids.push(...found);
             }
 
-            // Crear vista aislada
-            viewer.IFC.loader.ifcManager.removeSubset(modelID, undefined, 'filter');
-            const original = viewer.context.items.pickableIfcModels.find(m => m.modelID === modelID);
-            if(original) original.visible = false;
-
             if(ids.length > 0) {
                 viewer.IFC.loader.ifcManager.createSubset({
-                    modelID: modelID, ids: ids, scene: viewer.context.getScene(), removePrevious: true, customId: 'filter'
+                    modelID, ids, scene: viewer.context.getScene(), removePrevious: true, customId: 'custom'
                 });
             }
         }
 
-        window.resetModel = (btn) => {
+        window.reset = () => {
             if (modelID === null) return;
-            updateBtns(btn);
-            viewer.IFC.loader.ifcManager.removeSubset(modelID, undefined, 'filter');
-            const original = viewer.context.items.pickableIfcModels.find(m => m.modelID === modelID);
-            if(original) original.visible = true;
+            viewer.IFC.loader.ifcManager.removeSubset(modelID, undefined, 'custom');
+            const model = viewer.context.items.pickableIfcModels.find(m => m.modelID === modelID);
+            if(model) model.visible = true;
         }
 
-        function updateBtns(btn) {
-            document.querySelectorAll('.btn-filter').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
+        function showError(txt) {
+            document.getElementById('spinner').style.display = 'none';
+            statusText.style.display = 'none';
+            errorMsg.style.display = 'block';
+            errorMsg.innerText = txt;
         }
 
-        // Eventos básicos
+        // Ejecutar
+        main();
+
+        // Eventos mouse
         window.onmousemove = () => viewer.IFC.selector.prepickIfcItem();
-        window.ondblclick = () => viewer.IFC.selector.pickIfcItem();
 
     </script>
 </body>
