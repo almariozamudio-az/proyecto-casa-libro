@@ -3,23 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Diagnóstico Libro BIM</title>
+    <title>Libro BIM</title>
     <style>
-        body { font-family: sans-serif; margin: 0; overflow: hidden; background: #f0f0f0; }
-        #message-box {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            background: white; padding: 30px; border-radius: 10px;
-            box-shadow: 0 0 20px rgba(0,0,0,0.2); text-align: center; max-width: 80%;
-            z-index: 10;
+        body { margin: 0; overflow: hidden; background: #f0f0f0; font-family: sans-serif; }
+        #loading {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: white; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 10;
         }
-        h2 { margin-top: 0; }
-        .error { color: red; font-weight: bold; }
-        .success { color: green; font-weight: bold; }
-        button { margin-top: 15px; padding: 10px 20px; cursor: pointer; }
-        #viewer-container { width: 100vw; height: 100vh; }
+        .error-msg { color: red; background: #ffdada; padding: 20px; border-radius: 10px; margin-top: 20px; text-align: center; display: none; }
     </style>
     
-    <!-- ImportMap para asegurar versiones compatibles -->
     <script type="importmap">
         {
             "imports": {
@@ -31,59 +25,45 @@
 </head>
 <body>
 
-    <div id="message-box">
-        <h2>Estado del Sistema</h2>
-        <p id="status">🔍 Buscando archivo 'modelo.ifc'...</p>
-        <div id="details" style="font-size: 0.9em; color: #666; margin-top: 10px;"></div>
+    <div id="loading">
+        <h2>Cargando modelo...</h2>
+        <div id="error-box" class="error-msg"></div>
     </div>
 
-    <div id="viewer-container"></div>
+    <div id="viewer-container" style="width: 100vw; height: 100vh;"></div>
 
     <script type="module">
         import { IfcViewerAPI } from 'web-ifc-viewer';
 
-        const statusEl = document.getElementById('status');
-        const detailsEl = document.getElementById('details');
-        const msgBox = document.getElementById('message-box');
+        const errorBox = document.getElementById('error-box');
+        const container = document.getElementById('viewer-container');
+        const viewer = new IfcViewerAPI({ container, backgroundColor: { r: 240, g: 240, b: 240, a: 1 } });
+        
+        viewer.axes.setAxes();
+        viewer.grid.setGrid();
 
         async function start() {
-            const container = document.getElementById('viewer-container');
-            const viewer = new IfcViewerAPI({ container, backgroundColor: { r: 240, g: 240, b: 240, a: 1 } });
-            viewer.axes.setAxes();
-            viewer.grid.setGrid();
+            // 1. Configurar motor
+            await viewer.IFC.setWasmPath('https://unpkg.com/web-ifc@0.0.36/', true);
 
-            // URL EXACTA DE TU ARCHIVO
-            const fileUrl = 'https://almariozamudio-az.github.io/proyecto-casa-libro/modelo.ifc';
+            // 2. Definir la URL exacta del nuevo archivo
+            const url = 'https://almariozamudio-az.github.io/proyecto-casa-libro/casa.ifc';
 
             try {
-                // PASO 1: VERIFICAR SI EL ARCHIVO EXISTE (Diagnóstico)
-                statusEl.innerText = "📡 Verificando conexión con el archivo...";
-                const response = await fetch(fileUrl);
-                
-                if (!response.ok) {
-                    throw new Error(`❌ EL ARCHIVO NO EXISTE (Error ${response.status}).<br>Por favor verifica el nombre en GitHub.`);
-                }
-                
-                detailsEl.innerText = "Archivo encontrado. Iniciando motor 3D...";
+                // Verificamos si el archivo existe antes de cargarlo
+                const check = await fetch(url);
+                if(!check.ok) throw new Error(`No se encuentra el archivo (Error ${check.status}). ¿Seguro que lo renombraste a 'casa.ifc'?`);
 
-                // PASO 2: CARGAR EL MODELO
-                await viewer.IFC.setWasmPath('https://unpkg.com/web-ifc@0.0.36/', true);
+                // Cargamos el modelo
+                const model = await viewer.IFC.loadIfcUrl(url);
                 
-                const model = await viewer.IFC.loadIfcUrl(fileUrl);
-
-                if (!model) {
-                    throw new Error("El archivo se descargó pero el motor 3D devolvió 'Nulo'. El archivo podría estar dañado o vacío.");
-                }
-
-                // ÉXITO
-                statusEl.innerHTML = "<span class='success'>¡MODELO CARGADO!</span>";
-                detailsEl.innerText = "Cerrando esta ventana en 2 segundos...";
-                setTimeout(() => { msgBox.style.display = 'none'; }, 2000);
+                // Si llegamos aquí, todo funcionó
+                document.getElementById('loading').style.display = 'none';
 
             } catch (err) {
-                statusEl.innerHTML = "<span class='error'>ERROR CRÍTICO</span>";
-                detailsEl.innerHTML = err.message;
                 console.error(err);
+                errorBox.style.display = 'block';
+                errorBox.innerHTML = `<strong>❌ OCURRIÓ UN ERROR:</strong><br>${err.message}`;
             }
         }
 
